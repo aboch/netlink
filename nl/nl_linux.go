@@ -172,6 +172,7 @@ func (a *RtAttr) Serialize() []byte {
 type NetlinkRequest struct {
 	syscall.NlMsghdr
 	Data []NetlinkRequestData
+	Sock *NetlinkSocket
 }
 
 // Serialize the Netlink Request into a byte array
@@ -206,12 +207,16 @@ func (req *NetlinkRequest) AddData(data NetlinkRequestData) {
 // Returns a list of netlink messages in seriaized format, optionally filtered
 // by resType.
 func (req *NetlinkRequest) Execute(sockType int, resType uint16) ([][]byte, error) {
-	s, err := getNetlinkSocket(sockType)
-	if err != nil {
-		return nil, err
+	s := req.Sock
+	if s == nil {
+		var err error
+		s, err = getNetlinkSocket(sockType)
+		if err != nil {
+			return nil, err
+		}
+		defer s.Close()
 	}
-	defer s.Close()
-
+req.Seq = 0
 	if err := s.Send(req); err != nil {
 		return nil, err
 	}
@@ -271,6 +276,22 @@ func NewNetlinkRequest(proto, flags int) *NetlinkRequest {
 			Seq:   atomic.AddUint32(&nextSeqNr, 1),
 		},
 	}
+}
+
+func NewNetlinkRequestWithSocket(socket *NetlinkSocket, proto, flags int) *NetlinkRequest {
+	return &NetlinkRequest{
+		NlMsghdr: syscall.NlMsghdr{
+			Len:   uint32(syscall.SizeofNlMsghdr),
+			Type:  uint16(proto),
+			Flags: syscall.NLM_F_REQUEST | uint16(flags),
+			Seq:   atomic.AddUint32(&nextSeqNr, 1),
+		},
+		Sock: socket,
+	}
+}
+
+func GetNetlinkSocket(protocol int) (*NetlinkSocket, error) {
+	return getNetlinkSocket(protocol)
 }
 
 type NetlinkSocket struct {

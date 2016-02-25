@@ -33,12 +33,37 @@ func ensureIndex(link *LinkAttrs) {
 	}
 }
 
+func ensureIndex2(sock *nl.NetlinkSocket, link *LinkAttrs) {
+	if link != nil && link.Index == 0 {
+		newlink, _ := LinkByName2(sock, link.Name)
+		if newlink != nil {
+			link.Index = newlink.Attrs().Index
+		}
+	}
+}
+
 // LinkSetUp enables the link device.
 // Equivalent to: `ip link set $link up`
 func LinkSetUp(link Link) error {
 	base := link.Attrs()
 	ensureIndex(base)
 	req := nl.NewNetlinkRequest(syscall.RTM_NEWLINK, syscall.NLM_F_ACK)
+
+	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
+	msg.Change = syscall.IFF_UP
+	msg.Flags = syscall.IFF_UP
+	msg.Index = int32(base.Index)
+	req.AddData(msg)
+
+	_, err := req.Execute(syscall.NETLINK_ROUTE, 0)
+	return err
+}
+
+func LinkSetUp2(socket *nl.NetlinkSocket, link Link) error {
+	base := link.Attrs()
+	ensureIndex2(socket, base)
+	req := nl.NewNetlinkRequest(syscall.RTM_NEWLINK, syscall.NLM_F_ACK)
+	req.Sock = socket
 
 	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
 	msg.Change = syscall.IFF_UP
@@ -57,6 +82,21 @@ func LinkSetDown(link Link) error {
 	ensureIndex(base)
 	req := nl.NewNetlinkRequest(syscall.RTM_NEWLINK, syscall.NLM_F_ACK)
 
+	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
+	msg.Change = syscall.IFF_UP
+	msg.Flags = 0 & ^syscall.IFF_UP
+	msg.Index = int32(base.Index)
+	req.AddData(msg)
+
+	_, err := req.Execute(syscall.NETLINK_ROUTE, 0)
+	return err
+}
+
+func LinkSetDown2(socket *nl.NetlinkSocket, link Link) error {
+	base := link.Attrs()
+	ensureIndex2(socket, base)
+	req := nl.NewNetlinkRequest(syscall.RTM_NEWLINK, syscall.NLM_F_ACK)
+	req.Sock = socket
 	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
 	msg.Change = syscall.IFF_UP
 	msg.Flags = 0 & ^syscall.IFF_UP
@@ -88,12 +128,48 @@ func LinkSetMTU(link Link, mtu int) error {
 	return err
 }
 
+func LinkSetMTU2(socket *nl.NetlinkSocket, link Link, mtu int) error {
+	base := link.Attrs()
+	ensureIndex2(socket, base)
+	req := nl.NewNetlinkRequest(syscall.RTM_SETLINK, syscall.NLM_F_ACK)
+	req.Sock = socket
+	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
+	msg.Index = int32(base.Index)
+	req.AddData(msg)
+
+	b := make([]byte, 4)
+	native.PutUint32(b, uint32(mtu))
+
+	data := nl.NewRtAttr(syscall.IFLA_MTU, b)
+	req.AddData(data)
+
+	_, err := req.Execute(syscall.NETLINK_ROUTE, 0)
+	return err
+}
+
 // LinkSetName sets the name of the link device.
 // Equivalent to: `ip link set $link name $name`
 func LinkSetName(link Link, name string) error {
 	base := link.Attrs()
 	ensureIndex(base)
 	req := nl.NewNetlinkRequest(syscall.RTM_SETLINK, syscall.NLM_F_ACK)
+
+	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
+	msg.Index = int32(base.Index)
+	req.AddData(msg)
+
+	data := nl.NewRtAttr(syscall.IFLA_IFNAME, []byte(name))
+	req.AddData(data)
+
+	_, err := req.Execute(syscall.NETLINK_ROUTE, 0)
+	return err
+}
+
+func LinkSetName2(socket *nl.NetlinkSocket, link Link, name string) error {
+	base := link.Attrs()
+	ensureIndex2(socket, base)
+	req := nl.NewNetlinkRequest(syscall.RTM_SETLINK, syscall.NLM_F_ACK)
+	req.Sock = socket
 
 	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
 	msg.Index = int32(base.Index)
@@ -131,6 +207,22 @@ func LinkSetHardwareAddr(link Link, hwaddr net.HardwareAddr) error {
 	ensureIndex(base)
 	req := nl.NewNetlinkRequest(syscall.RTM_SETLINK, syscall.NLM_F_ACK)
 
+	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
+	msg.Index = int32(base.Index)
+	req.AddData(msg)
+
+	data := nl.NewRtAttr(syscall.IFLA_ADDRESS, []byte(hwaddr))
+	req.AddData(data)
+
+	_, err := req.Execute(syscall.NETLINK_ROUTE, 0)
+	return err
+}
+
+func LinkSetHardwareAddr2(socket *nl.NetlinkSocket, link Link, hwaddr net.HardwareAddr) error {
+	base := link.Attrs()
+	ensureIndex2(socket, base)
+	req := nl.NewNetlinkRequest(syscall.RTM_SETLINK, syscall.NLM_F_ACK)
+	req.Sock = socket
 	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
 	msg.Index = int32(base.Index)
 	req.AddData(msg)
@@ -205,6 +297,19 @@ func LinkSetMaster(link Link, master *Bridge) error {
 	return LinkSetMasterByIndex(link, index)
 }
 
+func LinkSetMaster2(socket *nl.NetlinkSocket, link Link, master *Bridge) error {
+	index := 0
+	if master != nil {
+		masterBase := master.Attrs()
+		ensureIndex2(socket, masterBase)
+		index = masterBase.Index
+	}
+	if index <= 0 {
+		return fmt.Errorf("Device does not exist")
+	}
+	return LinkSetMasterByIndex2(socket, link, index)
+}
+
 // LinkSetNoMaster removes the master of the link device.
 // Equivalent to: `ip link set $link nomaster`
 func LinkSetNoMaster(link Link) error {
@@ -218,6 +323,25 @@ func LinkSetMasterByIndex(link Link, masterIndex int) error {
 	ensureIndex(base)
 	req := nl.NewNetlinkRequest(syscall.RTM_SETLINK, syscall.NLM_F_ACK)
 
+	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
+	msg.Index = int32(base.Index)
+	req.AddData(msg)
+
+	b := make([]byte, 4)
+	native.PutUint32(b, uint32(masterIndex))
+
+	data := nl.NewRtAttr(syscall.IFLA_MASTER, b)
+	req.AddData(data)
+
+	_, err := req.Execute(syscall.NETLINK_ROUTE, 0)
+	return err
+}
+
+func LinkSetMasterByIndex2(socket *nl.NetlinkSocket, link Link, masterIndex int) error {
+	base := link.Attrs()
+	ensureIndex2(socket, base)
+	req := nl.NewNetlinkRequestWithSocket(socket, syscall.RTM_SETLINK, syscall.NLM_F_ACK)
+	req.Sock = socket
 	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
 	msg.Index = int32(base.Index)
 	req.AddData(msg)
@@ -598,6 +722,168 @@ func LinkAdd(link Link) error {
 	return nil
 }
 
+func LinkAdd2(socket *nl.NetlinkSocket, link Link) error {
+	// TODO: set mtu and hardware address
+	// TODO: support extra data for macvlan
+	base := link.Attrs()
+
+	if base.Name == "" {
+		return fmt.Errorf("LinkAttrs.Name cannot be empty!")
+	}
+
+	if tuntap, ok := link.(*Tuntap); ok {
+		// TODO: support user
+		// TODO: support group
+		// TODO: support non- one_queue
+		// TODO: support pi | vnet_hdr | multi_queue
+		// TODO: support non- exclusive
+		// TODO: support non- persistent
+		if tuntap.Mode < syscall.IFF_TUN || tuntap.Mode > syscall.IFF_TAP {
+			return fmt.Errorf("Tuntap.Mode %v unknown!", tuntap.Mode)
+		}
+		file, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		var req ifReq
+		req.Flags |= syscall.IFF_ONE_QUEUE
+		req.Flags |= syscall.IFF_TUN_EXCL
+		copy(req.Name[:15], base.Name)
+		req.Flags |= uint16(tuntap.Mode)
+		_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), uintptr(syscall.TUNSETIFF), uintptr(unsafe.Pointer(&req)))
+		if errno != 0 {
+			return fmt.Errorf("Tuntap IOCTL TUNSETIFF failed, errno %v", errno)
+		}
+		_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), uintptr(syscall.TUNSETPERSIST), 1)
+		if errno != 0 {
+			return fmt.Errorf("Tuntap IOCTL TUNSETPERSIST failed, errno %v", errno)
+		}
+		ensureIndex2(socket, base)
+
+		// can't set master during create, so set it afterwards
+		if base.MasterIndex != 0 {
+			// TODO: verify MasterIndex is actually a bridge?
+			return LinkSetMasterByIndex2(socket, link, base.MasterIndex)
+		}
+		return nil
+	}
+
+	req := nl.NewNetlinkRequest(syscall.RTM_NEWLINK, syscall.NLM_F_CREATE|syscall.NLM_F_EXCL|syscall.NLM_F_ACK)
+	req.Sock = socket
+	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
+	// TODO: make it shorter
+	if base.Flags&net.FlagUp != 0 {
+		msg.Change = syscall.IFF_UP
+		msg.Flags = syscall.IFF_UP
+	}
+	if base.Flags&net.FlagBroadcast != 0 {
+		msg.Change |= syscall.IFF_BROADCAST
+		msg.Flags |= syscall.IFF_BROADCAST
+	}
+	if base.Flags&net.FlagLoopback != 0 {
+		msg.Change |= syscall.IFF_LOOPBACK
+		msg.Flags |= syscall.IFF_LOOPBACK
+	}
+	if base.Flags&net.FlagPointToPoint != 0 {
+		msg.Change |= syscall.IFF_POINTOPOINT
+		msg.Flags |= syscall.IFF_POINTOPOINT
+	}
+	if base.Flags&net.FlagMulticast != 0 {
+		msg.Change |= syscall.IFF_MULTICAST
+		msg.Flags |= syscall.IFF_MULTICAST
+	}
+	req.AddData(msg)
+
+	if base.ParentIndex != 0 {
+		b := make([]byte, 4)
+		native.PutUint32(b, uint32(base.ParentIndex))
+		data := nl.NewRtAttr(syscall.IFLA_LINK, b)
+		req.AddData(data)
+	} else if link.Type() == "ipvlan" {
+		return fmt.Errorf("Can't create ipvlan link without ParentIndex")
+	}
+
+	nameData := nl.NewRtAttr(syscall.IFLA_IFNAME, nl.ZeroTerminated(base.Name))
+	req.AddData(nameData)
+
+	if base.MTU > 0 {
+		mtu := nl.NewRtAttr(syscall.IFLA_MTU, nl.Uint32Attr(uint32(base.MTU)))
+		req.AddData(mtu)
+	}
+
+	if base.TxQLen >= 0 {
+		qlen := nl.NewRtAttr(syscall.IFLA_TXQLEN, nl.Uint32Attr(uint32(base.TxQLen)))
+		req.AddData(qlen)
+	}
+
+	if base.Namespace != nil {
+		var attr *nl.RtAttr
+		switch base.Namespace.(type) {
+		case NsPid:
+			val := nl.Uint32Attr(uint32(base.Namespace.(NsPid)))
+			attr = nl.NewRtAttr(syscall.IFLA_NET_NS_PID, val)
+		case NsFd:
+			val := nl.Uint32Attr(uint32(base.Namespace.(NsFd)))
+			attr = nl.NewRtAttr(nl.IFLA_NET_NS_FD, val)
+		}
+
+		req.AddData(attr)
+	}
+
+	linkInfo := nl.NewRtAttr(syscall.IFLA_LINKINFO, nil)
+	nl.NewRtAttrChild(linkInfo, nl.IFLA_INFO_KIND, nl.NonZeroTerminated(link.Type()))
+
+	if vlan, ok := link.(*Vlan); ok {
+		b := make([]byte, 2)
+		native.PutUint16(b, uint16(vlan.VlanId))
+		data := nl.NewRtAttrChild(linkInfo, nl.IFLA_INFO_DATA, nil)
+		nl.NewRtAttrChild(data, nl.IFLA_VLAN_ID, b)
+	} else if veth, ok := link.(*Veth); ok {
+		data := nl.NewRtAttrChild(linkInfo, nl.IFLA_INFO_DATA, nil)
+		peer := nl.NewRtAttrChild(data, nl.VETH_INFO_PEER, nil)
+		nl.NewIfInfomsgChild(peer, syscall.AF_UNSPEC)
+		nl.NewRtAttrChild(peer, syscall.IFLA_IFNAME, nl.ZeroTerminated(veth.PeerName))
+		if base.TxQLen >= 0 {
+			nl.NewRtAttrChild(peer, syscall.IFLA_TXQLEN, nl.Uint32Attr(uint32(base.TxQLen)))
+		}
+		if base.MTU > 0 {
+			nl.NewRtAttrChild(peer, syscall.IFLA_MTU, nl.Uint32Attr(uint32(base.MTU)))
+		}
+
+	} else if vxlan, ok := link.(*Vxlan); ok {
+		addVxlanAttrs(vxlan, linkInfo)
+	} else if bond, ok := link.(*Bond); ok {
+		addBondAttrs(bond, linkInfo)
+	} else if ipv, ok := link.(*IPVlan); ok {
+		data := nl.NewRtAttrChild(linkInfo, nl.IFLA_INFO_DATA, nil)
+		nl.NewRtAttrChild(data, nl.IFLA_IPVLAN_MODE, nl.Uint16Attr(uint16(ipv.Mode)))
+	} else if macv, ok := link.(*Macvlan); ok {
+		if macv.Mode != MACVLAN_MODE_DEFAULT {
+			data := nl.NewRtAttrChild(linkInfo, nl.IFLA_INFO_DATA, nil)
+			nl.NewRtAttrChild(data, nl.IFLA_MACVLAN_MODE, nl.Uint32Attr(macvlanModes[macv.Mode]))
+		}
+	} else if gretap, ok := link.(*Gretap); ok {
+		addGretapAttrs(gretap, linkInfo)
+	}
+
+	req.AddData(linkInfo)
+
+	_, err := req.Execute(syscall.NETLINK_ROUTE, 0)
+	if err != nil {
+		return err
+	}
+
+	ensureIndex2(socket, base)
+
+	// can't set master during create, so set it afterwards
+	if base.MasterIndex != 0 {
+		// TODO: verify MasterIndex is actually a bridge?
+		return LinkSetMasterByIndex2(socket, link, base.MasterIndex)
+	}
+	return nil
+}
+
 // LinkDel deletes link device. Either Index or Name must be set in
 // the link object for it to be deleted. The other values are ignored.
 // Equivalent to: `ip link del $link`
@@ -616,8 +902,37 @@ func LinkDel(link Link) error {
 	return err
 }
 
+func LinkDel2(socket *nl.NetlinkSocket, link Link) error {
+	base := link.Attrs()
+
+	ensureIndex2(socket, base)
+
+	req := nl.NewNetlinkRequestWithSocket(socket, syscall.RTM_DELLINK, syscall.NLM_F_ACK)
+
+	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
+	msg.Index = int32(base.Index)
+	req.AddData(msg)
+
+	_, err := req.Execute(syscall.NETLINK_ROUTE, 0)
+	return err
+}
+
 func linkByNameDump(name string) (Link, error) {
 	links, err := LinkList()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, link := range links {
+		if link.Attrs().Name == name {
+			return link, nil
+		}
+	}
+	return nil, fmt.Errorf("Link %s not found", name)
+}
+
+func linkByNameDump2(sock *nl.NetlinkSocket, name string) (Link, error) {
+	links, err := LinkList2(sock)
 	if err != nil {
 		return nil, err
 	}
@@ -664,6 +979,30 @@ func LinkByName(name string) (Link, error) {
 		// so fall back to dumping all links
 		lookupByDump = true
 		return linkByNameDump(name)
+	}
+
+	return link, err
+}
+
+func LinkByName2(sock *nl.NetlinkSocket, name string) (Link, error) {
+	if lookupByDump {
+		return linkByNameDump2(sock, name)
+	}
+
+	req := nl.NewNetlinkRequest(syscall.RTM_GETLINK, syscall.NLM_F_ACK)
+	req.Sock = sock
+	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
+	req.AddData(msg)
+
+	nameData := nl.NewRtAttr(syscall.IFLA_IFNAME, nl.ZeroTerminated(name))
+	req.AddData(nameData)
+
+	link, err := execGetLink(req)
+	if err == syscall.EINVAL {
+		// older kernels don't support looking up via IFLA_IFNAME
+		// so fall back to dumping all links
+		lookupByDump = true
+		return linkByNameDump2(sock, name)
 	}
 
 	return link, err
@@ -862,6 +1201,31 @@ func LinkList() ([]Link, error) {
 	return res, nil
 }
 
+func LinkList2(sock *nl.NetlinkSocket) ([]Link, error) {
+	// NOTE(vish): This duplicates functionality in net/iface_linux.go, but we need
+	//             to get the message ourselves to parse link type.
+	req := nl.NewNetlinkRequest(syscall.RTM_GETLINK, syscall.NLM_F_DUMP)
+	req.Sock = sock
+	msg := nl.NewIfInfomsg(syscall.AF_UNSPEC)
+	req.AddData(msg)
+
+	msgs, err := req.Execute(syscall.NETLINK_ROUTE, syscall.RTM_NEWLINK)
+	if err != nil {
+		return nil, err
+	}
+
+	var res []Link
+	for _, m := range msgs {
+		link, err := linkDeserialize(m)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, link)
+	}
+
+	return res, nil
+}
+
 // LinkUpdate is used to pass information back from LinkSubscribe()
 type LinkUpdate struct {
 	nl.IfInfomsg
@@ -907,6 +1271,10 @@ func LinkSetHairpin(link Link, mode bool) error {
 	return setProtinfoAttr(link, mode, nl.IFLA_BRPORT_MODE)
 }
 
+func LinkSetHairpin2(socket *nl.NetlinkSocket, link Link, mode bool) error {
+	return setProtinfoAttr2(socket, link, mode, nl.IFLA_BRPORT_MODE)
+}
+
 func LinkSetGuard(link Link, mode bool) error {
 	return setProtinfoAttr(link, mode, nl.IFLA_BRPORT_GUARD)
 }
@@ -931,6 +1299,26 @@ func setProtinfoAttr(link Link, mode bool, attr int) error {
 	base := link.Attrs()
 	ensureIndex(base)
 	req := nl.NewNetlinkRequest(syscall.RTM_SETLINK, syscall.NLM_F_ACK)
+
+	msg := nl.NewIfInfomsg(syscall.AF_BRIDGE)
+	msg.Index = int32(base.Index)
+	req.AddData(msg)
+
+	br := nl.NewRtAttr(syscall.IFLA_PROTINFO|syscall.NLA_F_NESTED, nil)
+	nl.NewRtAttrChild(br, attr, boolToByte(mode))
+	req.AddData(br)
+	_, err := req.Execute(syscall.NETLINK_ROUTE, 0)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func setProtinfoAttr2(socket *nl.NetlinkSocket, link Link, mode bool, attr int) error {
+	base := link.Attrs()
+	ensureIndex2(socket, base)
+	req := nl.NewNetlinkRequest(syscall.RTM_SETLINK, syscall.NLM_F_ACK)
+	req.Sock = socket
 
 	msg := nl.NewIfInfomsg(syscall.AF_BRIDGE)
 	msg.Index = int32(base.Index)
