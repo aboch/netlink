@@ -30,6 +30,12 @@ func RouteAdd(route *Route) error {
 	return routeHandle(route, req, nl.NewRtMsg())
 }
 
+func RouteAdd2(sock *nl.NetlinkSocket, route *Route) error {
+	req := nl.NewNetlinkRequest(syscall.RTM_NEWROUTE, syscall.NLM_F_CREATE|syscall.NLM_F_EXCL|syscall.NLM_F_ACK)
+	req.Sock = sock
+	return routeHandle(route, req, nl.NewRtMsg())
+}
+
 // RouteDel will delete a route from the system.
 // Equivalent to: `ip route del $route`
 func RouteDel(route *Route) error {

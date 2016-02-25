@@ -172,6 +172,7 @@ func (a *RtAttr) Serialize() []byte {
 type NetlinkRequest struct {
 	syscall.NlMsghdr
 	Data []NetlinkRequestData
+	Sock *NetlinkSocket
 }
 
 // Serialize the Netlink Request into a byte array
@@ -206,12 +207,17 @@ func (req *NetlinkRequest) AddData(data NetlinkRequestData) {
 // Returns a list of netlink messages in seriaized format, optionally filtered
 // by resType.
 func (req *NetlinkRequest) Execute(sockType int, resType uint16) ([][]byte, error) {
-	s, err := getNetlinkSocket(sockType)
-	if err != nil {
-		return nil, err
+	s := req.Sock
+	if s == nil {
+		fmt.Printf("No socket present in request!\n")
+		var err error
+		s, err = getNetlinkSocket(sockType)
+		if err != nil {
+			return nil, err
+		}
+		defer s.Close()
 	}
-	defer s.Close()
-
+	//req.Seq = 0
 	if err := s.Send(req); err != nil {
 		return nil, err
 	}
@@ -231,7 +237,7 @@ done:
 		}
 		for _, m := range msgs {
 			if m.Header.Seq != req.Seq {
-				return nil, fmt.Errorf("Wrong Seq nr %d, expected 1", m.Header.Seq)
+				continue
 			}
 			if m.Header.Pid != pid {
 				return nil, fmt.Errorf("Wrong pid %d, expected %d", m.Header.Pid, pid)
@@ -271,6 +277,10 @@ func NewNetlinkRequest(proto, flags int) *NetlinkRequest {
 			Seq:   atomic.AddUint32(&nextSeqNr, 1),
 		},
 	}
+}
+
+func GetNetlinkSocket(protocol int) (*NetlinkSocket, error) {
+	return getNetlinkSocket(protocol)
 }
 
 type NetlinkSocket struct {
